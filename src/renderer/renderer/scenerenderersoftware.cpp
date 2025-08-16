@@ -199,7 +199,11 @@ namespace Renderer
                     {
                         for (uint32_t i = 0; i < InterpolantsSize - 1; i++)
                         {
-                            assert(GBuffer[y * OutputWidth + x][i] == 0.0f);
+                            if (GBuffer[y * OutputWidth + x][i] != 0.0f)
+                            {
+                                // todo.pavelza: this might trigger if there is same z for two triangles, should we do something about it?
+                                // assert(false);
+                            }
                             GBuffer[y * OutputWidth + x][i] = Lerp(left->currentC[i], right->currentC[i], percent);
                         }
                         TBuffer[y * OutputWidth + x] = tr.texture;

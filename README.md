@@ -20,7 +20,7 @@ Simple obj model viewer. Renders obj models with software rasterizer or DX12 ren
 1. Refactoring: fix todos in code.
 1. Add more render features to DX12 implementation for education purposes.
 1. Fix window resize issues.
-1. Speed up software rasterizer.
+1. Speed up software rasterizer. 
 1. Render imgui and image from renderer on separate threads.
 1. Add raytracer.
 1. Use dropdown to choose current renderer.

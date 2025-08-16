@@ -8,6 +8,10 @@ Simple obj model viewer. Renders obj models with software rasterizer or DX12 ren
 1. Install [VisualStudio](https://visualstudio.microsoft.com/downloads/) with MSVC Platform Toolset v143.
 1. Run build.bat
 
+## Project structure
+
+![Project structure diagram](/docs/polyesther_project_structure.jpg)
+
 ## TODO
 
 1. Add model load with imgui.

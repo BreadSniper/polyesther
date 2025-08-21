@@ -11,6 +11,7 @@ Simple obj model viewer. Renders obj models with software rasterizer or DX12 ren
 ## Project structure
 
 ![Project structure diagram](/docs/polyesther_project_structure.jpg)
+![Renderer DX12 diagram](/docs/polyesther_rendererdx12_structure.jpg)
 
 ## TODO
 

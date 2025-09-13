@@ -5,39 +5,24 @@
 
 namespace Renderer
 {
-    GraphicsQueue::GraphicsQueue(ID3D12Device* device)
+    CommandList::CommandList(ID3D12Device* device)
     {
-        D3D12_COMMAND_QUEUE_DESC queueDesc = {};
-        queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
-        queueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
-        D3D_NOT_FAILED(device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&queue)));
-        queue->SetName(L"Main command queue.");
-
         D3D_NOT_FAILED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator)));
         D3D_NOT_FAILED(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator.Get(), nullptr, IID_PPV_ARGS(&commandList)));
 
         commandList->SetName(L"Main command list.");
-
-        D3D_NOT_FAILED(device->CreateFence(currentFenceValue, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)));
-        NOT_FAILED(fenceEventHandle = CreateEventExW(nullptr, nullptr, CREATE_EVENT_MANUAL_RESET, EVENT_ALL_ACCESS), 0);
     }
 
-    GraphicsQueue::~GraphicsQueue()
+    void CommandList::SetCurrentPipelineStateObject(ID3D12PipelineState* pso)
     {
-        CloseHandle(fenceEventHandle);
+        if (pso != currentPSO)
+        {
+            currentPSO = pso;
+            commandList->SetPipelineState(pso);
+        }
     }
 
-    ID3D12GraphicsCommandList* GraphicsQueue::GetList()
-    {
-        return commandList.Get();
-    }
-
-    ID3D12CommandQueue* GraphicsQueue::GetQueue()
-    {
-        return queue.Get();
-    }
-
-    void GraphicsQueue::AddBarrierToList(ID3D12Resource* resource, D3D12_RESOURCE_STATES from, D3D12_RESOURCE_STATES to)
+    void CommandList::AddBarrier(ID3D12Resource* resource, D3D12_RESOURCE_STATES from, D3D12_RESOURCE_STATES to)
     {
         D3D12_RESOURCE_BARRIER barrier;
         barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -51,26 +36,49 @@ namespace Renderer
         commandList->ResourceBarrier(1, &barrier);
     }
 
-    void GraphicsQueue::SetCurrentPipelineStateObject(ID3D12PipelineState* pso)
+    ID3D12GraphicsCommandList* CommandList::GetList()
     {
-        if (pso != currentPSO)
-        {
-            currentPSO = pso;
-            commandList->SetPipelineState(pso);
-        }
+        return commandList.Get();
     }
 
-    void GraphicsQueue::Execute()
+    void CommandList::Reset()
     {
-        commandList->Close();
+        D3D_NOT_FAILED(allocator->Reset());
+        D3D_NOT_FAILED(commandList->Reset(allocator.Get(), currentPSO));
+    }
 
-        ID3D12CommandList* cmdsLists[1] = { commandList.Get() };
+    GraphicsQueue::GraphicsQueue(ID3D12Device* device)
+    {
+        D3D12_COMMAND_QUEUE_DESC queueDesc = {};
+        queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+        queueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
+        D3D_NOT_FAILED(device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&queue)));
+        queue->SetName(L"Main command queue.");
+
+        D3D_NOT_FAILED(device->CreateFence(currentFenceValue, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)));
+        NOT_FAILED(fenceEventHandle = CreateEventExW(nullptr, nullptr, CREATE_EVENT_MANUAL_RESET, EVENT_ALL_ACCESS), 0);
+    }
+
+    GraphicsQueue::~GraphicsQueue()
+    {
+        CloseHandle(fenceEventHandle);
+    }
+
+    ID3D12CommandQueue* GraphicsQueue::GetQueue()
+    {
+        return queue.Get();
+    }
+
+    void GraphicsQueue::Execute(CommandList& list)
+    {
+        list.GetList()->Close();
+
+        ID3D12CommandList* cmdsLists[1] = { list.GetList() };
         queue->ExecuteCommandLists(1, cmdsLists);
 
         WaitForCommandListCompletion();
 
-        D3D_NOT_FAILED(allocator->Reset());
-        D3D_NOT_FAILED(commandList->Reset(allocator.Get(), currentPSO));
+        list.Reset();
     }
 
     void GraphicsQueue::WaitForCommandListCompletion()
@@ -107,6 +115,12 @@ namespace Renderer
         }
 
         graphicsQueue = std::make_unique<GraphicsQueue>(device.Get());
+        commandList = std::make_unique<CommandList>(device.Get());
+    }
+
+    CommandList& DeviceDX12::GetList() const
+    {
+        return *commandList;
     }
 
     GraphicsQueue& DeviceDX12::GetQueue() const
@@ -138,14 +152,14 @@ namespace Renderer
         CreateDepthBuffer(width, height);
     }
 
-    void RenderTarget::ClearAndSetRenderTargets(GraphicsQueue& queue)
+    void RenderTarget::ClearAndSetRenderTargets(CommandList& list)
     {
         for (size_t i = 0; i < rtvHandles.size(); i++)
         {
-            queue.GetList()->ClearRenderTargetView(rtvHandles[i], clearColor, 0, nullptr);
+            list.GetList()->ClearRenderTargetView(rtvHandles[i], clearColor, 0, nullptr);
         }
-        queue.GetList()->ClearDepthStencilView(depthBufferHandle, D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
-        queue.GetList()->OMSetRenderTargets((UINT)rtvHandles.size(), rtvHandles.data(), false, &depthBufferHandle);
+        list.GetList()->ClearDepthStencilView(depthBufferHandle, D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
+        list.GetList()->OMSetRenderTargets((UINT)rtvHandles.size(), rtvHandles.data(), false, &depthBufferHandle);
     }
 
     ID3D12Resource* RenderTarget::GetBuffer(size_t i)
@@ -217,8 +231,8 @@ namespace Renderer
         depthBufferHandle = D3D12_CPU_DESCRIPTOR_HANDLE(depthStencilViewDescriptorHeap->GetCPUDescriptorHandleForHeapStart());
         deviceDX12.GetDevice()->CreateDepthStencilView(depthStencilBuffer.Get(), nullptr, depthBufferHandle);
 
-        deviceDX12.GetQueue().AddBarrierToList(depthStencilBuffer.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_DEPTH_WRITE);
-        deviceDX12.GetQueue().Execute();
+        deviceDX12.GetList().AddBarrier(depthStencilBuffer.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+        deviceDX12.GetQueue().Execute(deviceDX12.GetList());
     }
 
     D3D12_CLEAR_VALUE RenderTarget::CreateClearValue(D3D12_RESOURCE_DESC textureDescription)

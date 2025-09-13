@@ -101,11 +101,10 @@ namespace Renderer
             noCullingGBufferPSO = CreatePSO(gbuffer_vs.Get(), gbuffer_ps.Get(), D3D12_CULL_MODE_NONE, 3);
             finalImagePSO = CreatePSO(default_vs.Get(), default_ps.Get(), D3D12_CULL_MODE_BACK, 1);
 
-            // queue
-            deviceDX12.GetQueue().SetCurrentPipelineStateObject(gbufferPSO.Get());
+            deviceDX12.GetList().SetCurrentPipelineStateObject(gbufferPSO.Get());
 
             // move constant buffer into correct state
-            deviceDX12.GetQueue().AddBarrierToList(constantBuffer.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_GENERIC_READ);
+            deviceDX12.GetList().AddBarrier(constantBuffer.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_GENERIC_READ);
 
             gBuffer = std::make_unique<RenderTarget>(deviceDX12, rootDescriptorHeap.Get(), texture.GetWidth(), texture.GetHeight(), RenderTarget::Type::GBuffer);
             finalImage = std::make_unique<RenderTarget>(deviceDX12, rootDescriptorHeap.Get(), texture.GetWidth(), texture.GetHeight(), RenderTarget::Type::FinalImage);
@@ -424,7 +423,7 @@ namespace Renderer
 
             dataUploadBuffer->SetName(L"Data upload buffer.");
 
-            deviceDX12.GetQueue().AddBarrierToList(dataUploadBuffer.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_GENERIC_READ);
+            deviceDX12.GetList().AddBarrier(dataUploadBuffer.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_GENERIC_READ);
             BYTE* mappedData = nullptr;
             dataUploadBuffer->Map(0, nullptr, (void**)&mappedData);
             memcpy(mappedData, data.data(), data.size() * sizeof(T));
@@ -436,10 +435,10 @@ namespace Renderer
             
             dataBuffer->SetName(L"Data buffer.");
 
-            deviceDX12.GetQueue().AddBarrierToList(dataBuffer.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST);
-            deviceDX12.GetQueue().GetList()->CopyBufferRegion(dataBuffer.Get(), 0, dataUploadBuffer.Get(), 0, data.size() * sizeof(T));
-            deviceDX12.GetQueue().AddBarrierToList(dataBuffer.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_GENERIC_READ);
-            deviceDX12.GetQueue().Execute();
+            deviceDX12.GetList().AddBarrier(dataBuffer.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST);
+            deviceDX12.GetList().GetList()->CopyBufferRegion(dataBuffer.Get(), 0, dataUploadBuffer.Get(), 0, data.size() * sizeof(T));
+            deviceDX12.GetList().AddBarrier(dataBuffer.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_GENERIC_READ);
+            deviceDX12.GetQueue().Execute(deviceDX12.GetList());
 
             R bufferView;
             bufferView.BufferLocation = dataBuffer->GetGPUVirtualAddress();
@@ -490,14 +489,14 @@ namespace Renderer
 
             dataUploadBuffer->SetName(L"Texture upload buffer.");
 
-            deviceDX12.GetQueue().AddBarrierToList(dataUploadBuffer.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_GENERIC_READ);
+            deviceDX12.GetList().AddBarrier(dataUploadBuffer.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_GENERIC_READ);
 
             D3D12_HEAP_PROPERTIES defaultProperties = deviceDX12.GetDevice()->GetCustomHeapProperties(0, D3D12_HEAP_TYPE_DEFAULT);
             D3D_NOT_FAILED(deviceDX12.GetDevice()->CreateCommittedResource(&defaultProperties, D3D12_HEAP_FLAG_NONE, &textureDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&dataBuffer)));
 
             dataBuffer->SetName(L"Texture buffer");
 
-            deviceDX12.GetQueue().AddBarrierToList(dataBuffer.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST);
+            deviceDX12.GetList().AddBarrier(dataBuffer.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST);
 
             BYTE* mappedData = nullptr;
             dataUploadBuffer->Map(0, nullptr, (void**)&mappedData);
@@ -519,10 +518,10 @@ namespace Renderer
             src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
             src.PlacedFootprint = footprint;
 
-            deviceDX12.GetQueue().GetList()->CopyTextureRegion(&dest, 0, 0, 0, &src, nullptr);
-            deviceDX12.GetQueue().AddBarrierToList(dataBuffer.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_GENERIC_READ);
+            deviceDX12.GetList().GetList()->CopyTextureRegion(&dest, 0, 0, 0, &src, nullptr);
+            deviceDX12.GetList().AddBarrier(dataBuffer.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_GENERIC_READ);
             
-            deviceDX12.GetQueue().Execute();
+            deviceDX12.GetQueue().Execute(deviceDX12.GetList());
 
             // Describe and create a SRV for the texture.
             D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
@@ -579,7 +578,7 @@ namespace Renderer
 
             readbackBuffer->SetName(L"Readback buffer.");
 
-            deviceDX12.GetQueue().AddBarrierToList(readbackBuffer.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST);
+            deviceDX12.GetList().AddBarrier(readbackBuffer.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST);
 
             D3D12_TEXTURE_COPY_LOCATION dest;
             dest.pResource = readbackBuffer.Get();
@@ -591,11 +590,11 @@ namespace Renderer
             src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
             src.SubresourceIndex = 0;
 
-            deviceDX12.GetQueue().AddBarrierToList(dataBuffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
-            deviceDX12.GetQueue().GetList()->CopyTextureRegion(&dest, 0, 0, 0, &src, nullptr);
-            deviceDX12.GetQueue().AddBarrierToList(dataBuffer, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+            deviceDX12.GetList().AddBarrier(dataBuffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+            deviceDX12.GetList().GetList()->CopyTextureRegion(&dest, 0, 0, 0, &src, nullptr);
+            deviceDX12.GetList().AddBarrier(dataBuffer, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
 
-            deviceDX12.GetQueue().Execute();
+            deviceDX12.GetQueue().Execute(deviceDX12.GetList());
 
             // copy from readback buffer to cpu
             BYTE* mappedData = nullptr;
@@ -647,7 +646,7 @@ namespace Renderer
             viewport.MinDepth = 0.0f;
             viewport.MaxDepth = 1.0f;
 
-            deviceDX12.GetQueue().GetList()->RSSetViewports(1, &viewport);
+            deviceDX12.GetList().GetList()->RSSetViewports(1, &viewport);
 
             D3D12_RECT scissor;
             scissor.left = 0;
@@ -655,20 +654,20 @@ namespace Renderer
             scissor.right = static_cast<LONG>(texture.GetWidth());
             scissor.bottom = static_cast<LONG>(texture.GetHeight());
 
-            deviceDX12.GetQueue().GetList()->RSSetScissorRects(1, &scissor);
+            deviceDX12.GetList().GetList()->RSSetScissorRects(1, &scissor);
 
-            gBuffer->ClearAndSetRenderTargets(deviceDX12.GetQueue());
+            gBuffer->ClearAndSetRenderTargets(deviceDX12.GetList());
 
             ID3D12DescriptorHeap* descriptorHeaps[] = { rootDescriptorHeap.Get() };
-            deviceDX12.GetQueue().GetList()->SetDescriptorHeaps(1, descriptorHeaps);
-            deviceDX12.GetQueue().GetList()->SetGraphicsRootSignature(rootSignature.Get());
+            deviceDX12.GetList().GetList()->SetDescriptorHeaps(1, descriptorHeaps);
+            deviceDX12.GetList().GetList()->SetGraphicsRootSignature(rootSignature.Get());
 
-            deviceDX12.GetQueue().GetList()->IASetVertexBuffers(0, 1, &vertexBufferView);
-            deviceDX12.GetQueue().GetList()->IASetIndexBuffer(&indexBufferView);
+            deviceDX12.GetList().GetList()->IASetVertexBuffers(0, 1, &vertexBufferView);
+            deviceDX12.GetList().GetList()->IASetIndexBuffer(&indexBufferView);
 
-            deviceDX12.GetQueue().GetList()->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            deviceDX12.GetList().GetList()->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-            deviceDX12.GetQueue().GetList()->SetGraphicsRootDescriptorTable(0, rootDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+            deviceDX12.GetList().GetList()->SetGraphicsRootDescriptorTable(0, rootDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
 
             size_t lastIndex = 0;
             size_t lastVertex = 0;
@@ -679,41 +678,41 @@ namespace Renderer
 
                 if (model.backfaceCulling) // todo: sort to minimize switches?
                 {
-                    deviceDX12.GetQueue().SetCurrentPipelineStateObject(gbufferPSO.Get());
+                    deviceDX12.GetList().SetCurrentPipelineStateObject(gbufferPSO.Get());
                 }
                 else
                 {
-                    deviceDX12.GetQueue().SetCurrentPipelineStateObject(noCullingGBufferPSO.Get());
+                    deviceDX12.GetList().SetCurrentPipelineStateObject(noCullingGBufferPSO.Get());
                 }
 
-                deviceDX12.GetQueue().GetList()->DrawIndexedInstanced((UINT)indexCount, 1, (UINT)lastIndex, (INT)lastVertex, 0);
+                deviceDX12.GetList().GetList()->DrawIndexedInstanced((UINT)indexCount, 1, (UINT)lastIndex, (INT)lastVertex, 0);
                 lastVertex += model.vertices.size();
                 lastIndex += indexCount;
             }
 
-            deviceDX12.GetQueue().Execute();
+            deviceDX12.GetQueue().Execute(deviceDX12.GetList());
 
             // draw lighting
 
-            deviceDX12.GetQueue().GetList()->RSSetViewports(1, &viewport);
-            deviceDX12.GetQueue().GetList()->RSSetScissorRects(1, &scissor);
+            deviceDX12.GetList().GetList()->RSSetViewports(1, &viewport);
+            deviceDX12.GetList().GetList()->RSSetScissorRects(1, &scissor);
 
-            finalImage->ClearAndSetRenderTargets(deviceDX12.GetQueue());
+            finalImage->ClearAndSetRenderTargets(deviceDX12.GetList());
 
-            deviceDX12.GetQueue().GetList()->SetDescriptorHeaps(1, descriptorHeaps);
-            deviceDX12.GetQueue().GetList()->SetGraphicsRootSignature(rootSignature.Get());
+            deviceDX12.GetList().GetList()->SetDescriptorHeaps(1, descriptorHeaps);
+            deviceDX12.GetList().GetList()->SetGraphicsRootSignature(rootSignature.Get());
 
-            deviceDX12.GetQueue().GetList()->IASetVertexBuffers(0, 1, &vertexBufferView);
-            deviceDX12.GetQueue().GetList()->IASetIndexBuffer(&indexBufferView);
+            deviceDX12.GetList().GetList()->IASetVertexBuffers(0, 1, &vertexBufferView);
+            deviceDX12.GetList().GetList()->IASetIndexBuffer(&indexBufferView);
 
-            deviceDX12.GetQueue().GetList()->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            deviceDX12.GetList().GetList()->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-            deviceDX12.GetQueue().GetList()->SetGraphicsRootDescriptorTable(0, rootDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+            deviceDX12.GetList().GetList()->SetGraphicsRootDescriptorTable(0, rootDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
 
-            deviceDX12.GetQueue().SetCurrentPipelineStateObject(finalImagePSO.Get());
-            deviceDX12.GetQueue().GetList()->DrawIndexedInstanced((UINT)6, 1, (UINT)lastIndex, (INT)0, 0);
+            deviceDX12.GetList().SetCurrentPipelineStateObject(finalImagePSO.Get());
+            deviceDX12.GetList().GetList()->DrawIndexedInstanced((UINT)6, 1, (UINT)lastIndex, (INT)0, 0);
 
-            deviceDX12.GetQueue().Execute();
+            deviceDX12.GetQueue().Execute(deviceDX12.GetList());
 
             NOT_FAILED(DownloadTextureFromGPU(finalImage->GetBuffer(0), output), false);
 

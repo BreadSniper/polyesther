@@ -8,27 +8,38 @@
 
 namespace Renderer
 {
+    struct CommandList
+    {
+        DELETE_CTORS(CommandList);
+        CommandList(ID3D12Device* device);
+
+        void AddBarrier(ID3D12Resource* resource, D3D12_RESOURCE_STATES from, D3D12_RESOURCE_STATES to);
+
+        void SetCurrentPipelineStateObject(ID3D12PipelineState* pso);
+
+        ID3D12GraphicsCommandList* GetList();
+
+        void Reset();
+
+    private:
+        ID3D12PipelineState* currentPSO = nullptr; // not owned
+    
+        Microsoft::WRL::ComPtr<ID3D12CommandAllocator> allocator;
+        Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> commandList;
+    };
+
     struct GraphicsQueue
     {
         DELETE_CTORS(GraphicsQueue);
         GraphicsQueue(ID3D12Device* device);
         ~GraphicsQueue();
 
-        ID3D12GraphicsCommandList* GetList();
         ID3D12CommandQueue* GetQueue();
 
-        void AddBarrierToList(ID3D12Resource* resource, D3D12_RESOURCE_STATES from, D3D12_RESOURCE_STATES to);
-        void SetCurrentPipelineStateObject(ID3D12PipelineState* pso);
-
-        void Execute();
-
+        void Execute(CommandList& list);
         void WaitForCommandListCompletion();
 
     private:
-        ID3D12PipelineState* currentPSO = nullptr; // not owned
-
-        Microsoft::WRL::ComPtr<ID3D12CommandAllocator> allocator;
-        Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> commandList;
         Microsoft::WRL::ComPtr<ID3D12CommandQueue> queue;
         Microsoft::WRL::ComPtr<ID3D12Fence> fence;
 
@@ -48,10 +59,12 @@ namespace Renderer
         DeviceDX12(Mode mode = Mode::Default);
 
         GraphicsQueue& GetQueue() const;
+        CommandList& GetList() const;
         ID3D12Device* GetDevice() const;
 
     private:
         std::unique_ptr<GraphicsQueue> graphicsQueue;
+        std::unique_ptr<CommandList> commandList;
         Microsoft::WRL::ComPtr<ID3D12Device> device;
     };
 
@@ -67,7 +80,7 @@ namespace Renderer
         RenderTarget(const DeviceDX12& device, ID3D12DescriptorHeap* srvDescriptorHeap, size_t width, size_t height, Type type);
         ~RenderTarget() = default;
 
-        void ClearAndSetRenderTargets(GraphicsQueue& queue);
+        void ClearAndSetRenderTargets(CommandList& list);
 
         ID3D12Resource* GetBuffer(size_t i);
 

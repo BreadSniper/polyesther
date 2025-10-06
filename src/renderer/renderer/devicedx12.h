@@ -8,6 +8,8 @@
 
 namespace Renderer
 {
+    struct Texture;
+
     struct CommandList
     {
         DELETE_CTORS(CommandList);
@@ -62,10 +64,51 @@ namespace Renderer
         CommandList& GetList() const;
         ID3D12Device* GetDevice() const;
 
+        ID3D12Resource* UploadTextureToGPU(const std::string& id, const Texture& texture);
+
+        template<typename T>
+        T GetSRVDescriptorHandle(size_t index, ID3D12DescriptorHeap* srvDescriptorHeap)
+        {
+            return {};
+        }
+
+        template<>
+        D3D12_CPU_DESCRIPTOR_HANDLE GetSRVDescriptorHandle(size_t index, ID3D12DescriptorHeap* srvDescriptorHeap)
+        {
+            return { UINT64(
+                INT64(srvDescriptorHeap->GetCPUDescriptorHandleForHeapStart().ptr) + 
+                INT64(GetDevice()->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV) * index)
+            )};
+        }
+
+        template<>
+        D3D12_GPU_DESCRIPTOR_HANDLE GetSRVDescriptorHandle(size_t index, ID3D12DescriptorHeap* srvDescriptorHeap)
+        {
+            return { UINT64(
+                INT64(srvDescriptorHeap->GetGPUDescriptorHandleForHeapStart().ptr) + 
+                INT64(GetDevice()->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV) * index)
+            )};
+        }
+
+        void PutSRVIntoDescriptorHeap(ID3D12Resource* resource, size_t index, ID3D12DescriptorHeap* srvDescriptorHeap)
+        {
+            D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+            srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM; // todo.pavelza: put the parameter inside
+            srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+            srvDesc.Texture2D.MipLevels = 1;
+
+            GetDevice()->CreateShaderResourceView(resource, &srvDesc, GetSRVDescriptorHandle<D3D12_CPU_DESCRIPTOR_HANDLE>(index, srvDescriptorHeap));
+        }
+
     private:
         std::unique_ptr<GraphicsQueue> graphicsQueue;
         std::unique_ptr<CommandList> commandList;
         Microsoft::WRL::ComPtr<ID3D12Device> device;
+
+        std::map<std::string, Microsoft::WRL::ComPtr<ID3D12Resource>> textureResources;
+        // todo.pavelza: re-make to take less space, since they are never used together at the same time
+        std::map<std::string, Microsoft::WRL::ComPtr<ID3D12Resource>> textureUploadBuffers;
     };
 
     struct RenderTarget
@@ -77,7 +120,7 @@ namespace Renderer
         };
 
         DELETE_CTORS(RenderTarget);
-        RenderTarget(const DeviceDX12& device, ID3D12DescriptorHeap* srvDescriptorHeap, size_t width, size_t height, Type type);
+        RenderTarget(DeviceDX12& device, ID3D12DescriptorHeap* srvDescriptorHeap, size_t width, size_t height, Type type);
         ~RenderTarget() = default;
 
         void ClearAndSetRenderTargets(CommandList& list);
@@ -91,7 +134,7 @@ namespace Renderer
         D3D12_CLEAR_VALUE CreateClearValue(D3D12_RESOURCE_DESC textureDescription);
         D3D12_RESOURCE_DESC CreateTextureDescription(DXGI_FORMAT format, D3D12_RESOURCE_FLAGS flags = D3D12_RESOURCE_FLAG_NONE);
 
-        const DeviceDX12& deviceDX12;
+        DeviceDX12& deviceDX12;
 
         Microsoft::WRL::ComPtr<ID3D12Resource> depthStencilBuffer;
         Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> depthStencilViewDescriptorHeap;

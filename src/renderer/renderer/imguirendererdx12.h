@@ -16,7 +16,7 @@ namespace Renderer
     struct ImguiRenderer
     {
         DELETE_CTORS(ImguiRenderer);
-        ImguiRenderer(const DeviceDX12& device, uint32_t gameWidth, uint32_t gameHeight, HWND window);
+        ImguiRenderer(DeviceDX12& device, uint32_t gameWidth, uint32_t gameHeight, HWND window);
         ~ImguiRenderer();
 
         void Render(const Texture& texture, const std::function<void(ImTextureID)>& func);
@@ -24,6 +24,6 @@ namespace Renderer
     private:
         D3D12_GPU_DESCRIPTOR_HANDLE UploadTexturesToGPU(const Texture& texture); //todo.pavelza: code duplication with scenerendererdx12.cpp
         std::shared_ptr<ImguiRendererContext> context;
-        const DeviceDX12& deviceDX12;
+        DeviceDX12& deviceDX12;
     };
 }

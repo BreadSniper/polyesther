@@ -14,13 +14,10 @@ namespace Renderer
         ComPtr<IDXGISwapChain3> swapChain;
         ComPtr<ID3D12DescriptorHeap> rootDescriptorHeap;
 
-        ComPtr<ID3D12Resource> textureUploadBuffer;
-        ComPtr<ID3D12Resource> textureBuffer;
-
         ComPtr<ID3D12DescriptorHeap> backBufferDescHeap;
     };
 
-    ImguiRenderer::ImguiRenderer(const DeviceDX12& device, uint32_t gameWidth, uint32_t gameHeight, HWND window)
+    ImguiRenderer::ImguiRenderer(DeviceDX12& device, uint32_t gameWidth, uint32_t gameHeight, HWND window)
         : deviceDX12(device)
     {
         context = std::make_shared<ImguiRendererContext>();
@@ -39,6 +36,7 @@ namespace Renderer
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
         io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;         // Enable Docking
 
+        // Zero index is saved for fonts.
         ImGui_ImplDX12_Init(device.GetDevice(), 1,
             DXGI_FORMAT_R8G8B8A8_UNORM, context->rootDescriptorHeap.Get(),
             context->rootDescriptorHeap->GetCPUDescriptorHandleForHeapStart(),
@@ -99,104 +97,15 @@ namespace Renderer
         }
     }
 
-    D3D12_GPU_DESCRIPTOR_HANDLE ImguiRenderer::UploadTexturesToGPU(const Texture& texture)
-    {
-        D3D12_RESOURCE_DESC textureDesc = {};
-        textureDesc.MipLevels = 1;
-        textureDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-        textureDesc.Width = texture.GetWidth();
-        textureDesc.Height = static_cast<UINT>(texture.GetHeight());
-        textureDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
-        textureDesc.DepthOrArraySize = 1;
-        textureDesc.SampleDesc.Count = 1;
-        textureDesc.SampleDesc.Quality = 0;
-        textureDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-
-        D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
-        UINT numRows = 0;
-        UINT64 rowSizeInBytes = 0;
-        UINT64 totalBytes = 0;
-        deviceDX12.GetDevice()->GetCopyableFootprints(&textureDesc, 0, 1, 0, &footprint, &numRows, &rowSizeInBytes, &totalBytes);
-
-        if (!context->textureUploadBuffer)
-        {
-            D3D12_RESOURCE_DESC uploadBufferDescription;
-            uploadBufferDescription.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-            uploadBufferDescription.Alignment = 0;
-            uploadBufferDescription.Width = totalBytes;
-            uploadBufferDescription.Height = 1;
-            uploadBufferDescription.DepthOrArraySize = 1;
-            uploadBufferDescription.MipLevels = 1;
-            uploadBufferDescription.Format = DXGI_FORMAT_UNKNOWN;
-            uploadBufferDescription.SampleDesc.Count = 1;
-            uploadBufferDescription.SampleDesc.Quality = 0;
-            uploadBufferDescription.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-            uploadBufferDescription.Flags = D3D12_RESOURCE_FLAG_NONE;
-
-            D3D12_HEAP_PROPERTIES uploadProperties = deviceDX12.GetDevice()->GetCustomHeapProperties(0, D3D12_HEAP_TYPE_UPLOAD);
-            D3D_NOT_FAILED(deviceDX12.GetDevice()->CreateCommittedResource(&uploadProperties, D3D12_HEAP_FLAG_NONE, &uploadBufferDescription, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&context->textureUploadBuffer)));
-            context->textureUploadBuffer->SetName(L"Imgui texture upload buffer.");
-            deviceDX12.GetList().AddBarrier(context->textureUploadBuffer.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_GENERIC_READ);
-        }
-
-        if (context->textureBuffer)
-        {
-            deviceDX12.GetList().AddBarrier(context->textureBuffer.Get(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_COPY_DEST);
-        }
-        else
-        {
-            D3D12_HEAP_PROPERTIES defaultProperties = deviceDX12.GetDevice()->GetCustomHeapProperties(0, D3D12_HEAP_TYPE_DEFAULT);
-            D3D_NOT_FAILED(deviceDX12.GetDevice()->CreateCommittedResource(&defaultProperties, D3D12_HEAP_FLAG_NONE, &textureDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&context->textureBuffer)));
-            context->textureBuffer->SetName(L"Imgui texture buffer.");
-            deviceDX12.GetList().AddBarrier(context->textureBuffer.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST);
-        }
-
-        BYTE* mappedData = nullptr;
-        context->textureUploadBuffer->Map(0, nullptr, (void**)&mappedData);
-
-        for (size_t i = 0; i < numRows; i++)
-        {
-            memcpy(mappedData + footprint.Footprint.RowPitch * i, texture.GetBuffer() + rowSizeInBytes * i, rowSizeInBytes);
-        }
-        context->textureUploadBuffer->Unmap(0, nullptr);
-
-        D3D12_TEXTURE_COPY_LOCATION dest;
-        dest.pResource = context->textureBuffer.Get();
-        dest.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-        dest.PlacedFootprint = {};
-        dest.SubresourceIndex = 0;
-
-        D3D12_TEXTURE_COPY_LOCATION src;
-        src.pResource = context->textureUploadBuffer.Get();
-        src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-        src.PlacedFootprint = footprint;
-
-        deviceDX12.GetList().GetList()->CopyTextureRegion(&dest, 0, 0, 0, &src, nullptr);
-        deviceDX12.GetList().AddBarrier(context->textureBuffer.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_GENERIC_READ);
-
-        deviceDX12.GetQueue().Execute(deviceDX12.GetList());
-
-        // Describe and create a SRV for the texture.
-        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-        srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-        srvDesc.Format = textureDesc.Format;
-        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-        srvDesc.Texture2D.MipLevels = 1;
-
-        D3D12_CPU_DESCRIPTOR_HANDLE textureCPUDescriptor { SIZE_T(INT64(context->rootDescriptorHeap->GetCPUDescriptorHandleForHeapStart().ptr) + INT64(deviceDX12.GetDevice()->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV))) };
-        D3D12_GPU_DESCRIPTOR_HANDLE textureGPUDescriptor { UINT64(INT64(context->rootDescriptorHeap->GetGPUDescriptorHandleForHeapStart().ptr) + INT64(deviceDX12.GetDevice()->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV))) };
-        deviceDX12.GetDevice()->CreateShaderResourceView(context->textureBuffer.Get(), &srvDesc, textureCPUDescriptor);
-
-        return textureGPUDescriptor;
-    }
-
     void ImguiRenderer::Render(const Texture& texture, const std::function<void(ImTextureID)>& func)
     {
         ImGui_ImplDX12_NewFrame();
         ImGui::NewFrame();
         ImGui::DockSpaceOverViewport();
 
-        D3D12_GPU_DESCRIPTOR_HANDLE handle = UploadTexturesToGPU(texture);
+        // First index is for FinalImage texture
+        deviceDX12.PutSRVIntoDescriptorHeap(deviceDX12.UploadTextureToGPU("FinalImage", texture), 1, context->rootDescriptorHeap.Get());
+        D3D12_GPU_DESCRIPTOR_HANDLE handle = deviceDX12.GetSRVDescriptorHandle<D3D12_GPU_DESCRIPTOR_HANDLE>(1, context->rootDescriptorHeap.Get());
 
         func((ImTextureID)handle.ptr);
 

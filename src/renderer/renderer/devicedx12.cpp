@@ -1,5 +1,7 @@
 #include <renderer/devicedx12.h>
 #include <utils.h>
+#include <sstream>
+#include <string>
 
 #include <dxgi1_4.h>
 
@@ -118,6 +120,100 @@ namespace Renderer
         commandList = std::make_unique<CommandList>(device.Get());
     }
 
+    ID3D12Resource* DeviceDX12::UploadTextureToGPU(const std::string& id, const Texture& texture)
+    {
+        // todo.pavelza: verify that we are uploading new texture or overwriting texture with the same format and size
+        D3D12_RESOURCE_DESC textureDesc = {};
+        textureDesc.MipLevels = 1;
+        textureDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM; // todo.pavelza: move to texture?
+        textureDesc.Width = texture.GetWidth();
+        textureDesc.Height = static_cast<UINT>(texture.GetHeight());
+        textureDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+        textureDesc.DepthOrArraySize = 1;
+        textureDesc.SampleDesc.Count = 1;
+        textureDesc.SampleDesc.Quality = 0;
+        textureDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
+        UINT numRows = 0;
+        UINT64 rowSizeInBytes = 0;
+        UINT64 totalBytes = 0;
+        GetDevice()->GetCopyableFootprints(&textureDesc, 0, 1, 0, &footprint, &numRows, &rowSizeInBytes, &totalBytes);
+
+        if (textureUploadBuffers[id] == nullptr)
+        {
+            // create upload buffer for texture id
+            D3D12_RESOURCE_DESC uploadBufferDescription;
+            uploadBufferDescription.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+            uploadBufferDescription.Alignment = 0;
+            uploadBufferDescription.Width = totalBytes;
+            uploadBufferDescription.Height = 1;
+            uploadBufferDescription.DepthOrArraySize = 1;
+            uploadBufferDescription.MipLevels = 1;
+            uploadBufferDescription.Format = DXGI_FORMAT_UNKNOWN;
+            uploadBufferDescription.SampleDesc.Count = 1;
+            uploadBufferDescription.SampleDesc.Quality = 0;
+            uploadBufferDescription.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+            uploadBufferDescription.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+            D3D12_HEAP_PROPERTIES uploadProperties = GetDevice()->GetCustomHeapProperties(0, D3D12_HEAP_TYPE_UPLOAD);
+            D3D_NOT_FAILED(GetDevice()->CreateCommittedResource(&uploadProperties, D3D12_HEAP_FLAG_NONE, &uploadBufferDescription, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&textureUploadBuffers[id])));
+
+            std::wstringstream uploadBufferName;
+            uploadBufferName << L"Texture upload buffer for: " << std::wstring(id.begin(), id.end());
+            textureUploadBuffers[id]->SetName(uploadBufferName.str().c_str());
+
+            GetList().AddBarrier(textureUploadBuffers[id].Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_GENERIC_READ);
+        }
+
+        BYTE* mappedData = nullptr;
+        textureUploadBuffers[id]->Map(0, nullptr, (void**)&mappedData);
+
+        for (size_t i = 0; i < numRows; i++)
+        {
+            memcpy(mappedData + footprint.Footprint.RowPitch * i, texture.GetBuffer() + rowSizeInBytes * i, rowSizeInBytes);
+        }
+        textureUploadBuffers[id]->Unmap(0, nullptr);
+
+        if (textureResources[id] == nullptr)
+        {
+            // create texture with id
+            D3D12_HEAP_PROPERTIES defaultProperties = GetDevice()->GetCustomHeapProperties(0, D3D12_HEAP_TYPE_DEFAULT);
+            D3D_NOT_FAILED(GetDevice()->CreateCommittedResource(&defaultProperties, D3D12_HEAP_FLAG_NONE, &textureDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&textureResources[id])));
+
+            std::wstringstream textureName;
+            textureName << L"Texture resource with id: " << std::wstring(id.begin(), id.end());
+            textureResources[id]->SetName(textureName.str().c_str());
+        }
+
+        GetList().AddBarrier(textureResources[id].Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST);
+
+        D3D12_TEXTURE_COPY_LOCATION dest;
+        dest.pResource = textureResources[id].Get();
+        dest.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        dest.PlacedFootprint = {};
+        dest.SubresourceIndex = 0;
+
+        D3D12_TEXTURE_COPY_LOCATION src;
+        src.pResource = textureUploadBuffers[id].Get();
+        src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        src.PlacedFootprint = footprint;
+
+        GetList().GetList()->CopyTextureRegion(&dest, 0, 0, 0, &src, nullptr);
+        GetList().AddBarrier(textureResources[id].Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_GENERIC_READ);
+        
+        GetQueue().Execute(GetList());
+
+        // Describe and create a SRV for the texture.
+        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+        srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srvDesc.Format = textureDesc.Format;
+        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        srvDesc.Texture2D.MipLevels = 1;     
+
+        return textureResources[id].Get();
+    }
+
     CommandList& DeviceDX12::GetList() const
     {
         return *commandList;
@@ -133,7 +229,7 @@ namespace Renderer
         return device.Get();
     }
 
-    RenderTarget::RenderTarget(const DeviceDX12& device, ID3D12DescriptorHeap* srvDescriptorHeap, size_t width, size_t height, Type type)
+    RenderTarget::RenderTarget(DeviceDX12& device, ID3D12DescriptorHeap* srvDescriptorHeap, size_t width, size_t height, Type type)
         : deviceDX12(device)
         , bufferType(type)
         , targetWidth(width)

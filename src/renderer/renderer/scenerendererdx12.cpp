@@ -25,20 +25,9 @@ namespace Renderer
     constexpr UINT NumberOfConstantStructs = UINT(1);
     constexpr UINT NumberOfGBufferTextures = UINT(4);
 
-    struct GPU
-    {
-        GPU(const std::wstring& shaderPath)
-        {
-        }
-    };
-
-    struct PSOBuilder
-    {
-    };
-
     struct RendererDX12Context
     {
-        RendererDX12Context(const Scene& scene, const Texture& texture, const std::wstring& shaderPath, const DeviceDX12& device)
+        RendererDX12Context(const Scene& scene, const Texture& texture, const std::wstring& shaderPath, DeviceDX12& device)
             : scene(scene)
             , texture(texture)
             , deviceDX12(device)
@@ -163,14 +152,14 @@ namespace Renderer
 
             indexBufferView = UploadDataToGPU<uint16_t, D3D12_INDEX_BUFFER_VIEW>(indexData, indexBuffer);
 
-            size_t totalIndex = 0;
-            textureBuffers.resize(totalMaterials);
             for (const Model& model : scene.models)
             {
                 for (size_t i = 0; i < model.materials.size(); i++)
                 {
-                    UploadTexturesToGPU(model.materials[i].textureName, static_cast<int32_t>(totalIndex), textureBuffers[totalIndex]);
-                    totalIndex += 1;
+                    Texture texture;
+                    Load(model.materials[i].textureName, texture);
+
+                    device.PutSRVIntoDescriptorHeap(device.UploadTextureToGPU(model.materials[i].textureName, texture),NumberOfGBufferTextures + i, rootDescriptorHeap.Get());
                 }
             }
         }
@@ -448,98 +437,6 @@ namespace Renderer
             return bufferView;
         }
 
-        void UploadTexturesToGPU(const std::string& textureName, int32_t index, ComPtr<ID3D12Resource>& dataBuffer)
-        {
-            Texture texture;
-            Load(textureName, texture);
-
-            D3D12_RESOURCE_DESC textureDesc = {};
-            textureDesc.MipLevels = 1;
-            textureDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-            textureDesc.Width = texture.GetWidth();
-            textureDesc.Height = static_cast<UINT>(texture.GetHeight());
-            textureDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
-            textureDesc.DepthOrArraySize = 1;
-            textureDesc.SampleDesc.Count = 1;
-            textureDesc.SampleDesc.Quality = 0;
-            textureDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-
-            D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
-            UINT numRows = 0;
-            UINT64 rowSizeInBytes = 0;
-            UINT64 totalBytes = 0;
-            deviceDX12.GetDevice()->GetCopyableFootprints(&textureDesc, 0, 1, 0, &footprint, &numRows, &rowSizeInBytes, &totalBytes);
-
-            D3D12_RESOURCE_DESC uploadBufferDescription;
-            uploadBufferDescription.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-            uploadBufferDescription.Alignment = 0;
-            uploadBufferDescription.Width = totalBytes;
-            uploadBufferDescription.Height = 1;
-            uploadBufferDescription.DepthOrArraySize = 1;
-            uploadBufferDescription.MipLevels = 1;
-            uploadBufferDescription.Format = DXGI_FORMAT_UNKNOWN;
-            uploadBufferDescription.SampleDesc.Count = 1;
-            uploadBufferDescription.SampleDesc.Quality = 0;
-            uploadBufferDescription.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-            uploadBufferDescription.Flags = D3D12_RESOURCE_FLAG_NONE;
-
-            D3D12_HEAP_PROPERTIES uploadProperties = deviceDX12.GetDevice()->GetCustomHeapProperties(0, D3D12_HEAP_TYPE_UPLOAD);
-            ComPtr<ID3D12Resource> dataUploadBuffer;
-            D3D_NOT_FAILED(deviceDX12.GetDevice()->CreateCommittedResource(&uploadProperties, D3D12_HEAP_FLAG_NONE, &uploadBufferDescription, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&dataUploadBuffer)));
-
-            dataUploadBuffer->SetName(L"Texture upload buffer.");
-
-            deviceDX12.GetList().AddBarrier(dataUploadBuffer.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_GENERIC_READ);
-
-            D3D12_HEAP_PROPERTIES defaultProperties = deviceDX12.GetDevice()->GetCustomHeapProperties(0, D3D12_HEAP_TYPE_DEFAULT);
-            D3D_NOT_FAILED(deviceDX12.GetDevice()->CreateCommittedResource(&defaultProperties, D3D12_HEAP_FLAG_NONE, &textureDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&dataBuffer)));
-
-            dataBuffer->SetName(L"Texture buffer");
-
-            deviceDX12.GetList().AddBarrier(dataBuffer.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST);
-
-            BYTE* mappedData = nullptr;
-            dataUploadBuffer->Map(0, nullptr, (void**)&mappedData);
-
-            for (size_t i = 0; i < numRows; i++)
-            {
-                memcpy(mappedData + footprint.Footprint.RowPitch * i, texture.GetBuffer() + rowSizeInBytes * i, rowSizeInBytes);
-            }
-            dataUploadBuffer->Unmap(0, nullptr);
-
-            D3D12_TEXTURE_COPY_LOCATION dest;
-            dest.pResource = dataBuffer.Get();
-            dest.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-            dest.PlacedFootprint = {};
-            dest.SubresourceIndex = 0;
-
-            D3D12_TEXTURE_COPY_LOCATION src;
-            src.pResource = dataUploadBuffer.Get();
-            src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-            src.PlacedFootprint = footprint;
-
-            deviceDX12.GetList().GetList()->CopyTextureRegion(&dest, 0, 0, 0, &src, nullptr);
-            deviceDX12.GetList().AddBarrier(dataBuffer.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_GENERIC_READ);
-            
-            deviceDX12.GetQueue().Execute(deviceDX12.GetList());
-
-            // Describe and create a SRV for the texture.
-            D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-            srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-            srvDesc.Format = textureDesc.Format;
-            srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-            srvDesc.Texture2D.MipLevels = 1;
-
-            D3D12_CPU_DESCRIPTOR_HANDLE textureHandle = GetRootDescriptorHeapTextureHandle(index + NumberOfGBufferTextures);
-            deviceDX12.GetDevice()->CreateShaderResourceView(dataBuffer.Get(), &srvDesc, textureHandle);
-        }
-
-        D3D12_CPU_DESCRIPTOR_HANDLE GetRootDescriptorHeapTextureHandle(int32_t index)
-        {
-            // duplicates in render target
-            return { SIZE_T(INT64(rootDescriptorHeap->GetCPUDescriptorHandleForHeapStart().ptr) + INT64(deviceDX12.GetDevice()->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV) * (index + NumberOfConstantStructs))) };
-        }
-
         bool DownloadTextureFromGPU(ID3D12Resource* dataBuffer, Texture& texture)
         {
             D3D12_RESOURCE_DESC textureDesc = {};
@@ -738,7 +635,7 @@ namespace Renderer
         ComPtr<ID3D12PipelineState> noCullingGBufferPSO;
         ComPtr<ID3D12PipelineState> finalImagePSO;
 
-        const DeviceDX12& deviceDX12;
+        DeviceDX12& deviceDX12;
         const Scene& scene;
         const Texture& texture;
     };

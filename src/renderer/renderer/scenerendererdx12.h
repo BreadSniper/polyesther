@@ -15,7 +15,7 @@ namespace Renderer
     struct SceneRendererDX12 : public SceneRenderer
     {
         DELETE_CTORS(SceneRendererDX12);
-        SceneRendererDX12(const std::string& path, const DeviceDX12& device) : deviceDX12(device), shaderFolderPath(path) {};
+        SceneRendererDX12(const std::string& path, DeviceDX12& device) : deviceDX12(device), shaderFolderPath(path) {};
         ~SceneRendererDX12();
 
         bool Render(const Scene& scene, Texture& texture) override;
@@ -23,6 +23,6 @@ namespace Renderer
     private:
         std::shared_ptr<RendererDX12Context> context;
         std::string shaderFolderPath;
-        const DeviceDX12& deviceDX12;
+        DeviceDX12& deviceDX12;
     };
 }

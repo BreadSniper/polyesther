@@ -159,7 +159,7 @@ namespace Renderer
                     Texture texture;
                     Load(model.materials[i].textureName, texture);
 
-                    device.PutSRVIntoDescriptorHeap(device.UploadTextureToGPU(model.materials[i].textureName, texture),NumberOfGBufferTextures + i, rootDescriptorHeap.Get());
+                    device.PutSRVIntoDescriptorHeap(device.UploadTextureToGPU(model.materials[i].textureName, texture), NumberOfConstantStructs + NumberOfGBufferTextures + i, rootDescriptorHeap.Get());
                 }
             }
         }

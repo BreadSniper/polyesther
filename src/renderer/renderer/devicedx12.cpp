@@ -303,7 +303,7 @@ namespace Renderer
         srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
         srvDesc.Texture2D.MipLevels = 1;
 
-        srvHandles[i] = { SIZE_T(INT64(srvDescriptorHeap->GetCPUDescriptorHandleForHeapStart().ptr) + INT64(deviceDX12.GetDevice()->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV) * (bufferType == FinalImage ? (i + 1) : (i + 2)))) };
+        srvHandles[i] = { SIZE_T(INT64(srvDescriptorHeap->GetCPUDescriptorHandleForHeapStart().ptr) + INT64(deviceDX12.GetDevice()->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV) * (bufferType == FinalImage ? (i + 1) : (i + 2)))) }; // todo.pavelza: should use constants like NumberOfConstantStructs
         deviceDX12.GetDevice()->CreateShaderResourceView(renderTargets[i].Get(), &srvDesc, srvHandles[i]);
     }
 

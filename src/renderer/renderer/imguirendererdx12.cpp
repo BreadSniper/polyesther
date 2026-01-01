@@ -105,7 +105,7 @@ namespace Renderer
 
         // First index is for FinalImage texture
         deviceDX12.PutSRVIntoDescriptorHeap(deviceDX12.UploadTextureToGPU("FinalImage", texture), 1, context->rootDescriptorHeap.Get());
-        D3D12_GPU_DESCRIPTOR_HANDLE handle = deviceDX12.GetSRVDescriptorHandle<D3D12_GPU_DESCRIPTOR_HANDLE>(1, context->rootDescriptorHeap.Get());
+        D3D12_GPU_DESCRIPTOR_HANDLE handle = deviceDX12.GetDescriptorHandle<D3D12_GPU_DESCRIPTOR_HANDLE>(1, context->rootDescriptorHeap.Get(), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
         func((ImTextureID)handle.ptr);
 

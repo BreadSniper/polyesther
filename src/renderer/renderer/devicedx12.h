@@ -67,30 +67,30 @@ namespace Renderer
         ID3D12Resource* UploadTextureToGPU(const std::string& id, const Texture& texture);
 
         template<typename T>
-        T GetSRVDescriptorHandle(size_t index, ID3D12DescriptorHeap* srvDescriptorHeap)
+        T GetDescriptorHandle(size_t index, ID3D12DescriptorHeap* descriptorHeap, D3D12_DESCRIPTOR_HEAP_TYPE type)
         {
             return {};
         }
 
         template<>
-        D3D12_CPU_DESCRIPTOR_HANDLE GetSRVDescriptorHandle(size_t index, ID3D12DescriptorHeap* srvDescriptorHeap)
+        D3D12_CPU_DESCRIPTOR_HANDLE GetDescriptorHandle(size_t index, ID3D12DescriptorHeap* descriptorHeap, D3D12_DESCRIPTOR_HEAP_TYPE type)
         {
             return { UINT64(
-                INT64(srvDescriptorHeap->GetCPUDescriptorHandleForHeapStart().ptr) + 
-                INT64(GetDevice()->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV) * index)
+                INT64(descriptorHeap->GetCPUDescriptorHandleForHeapStart().ptr) + 
+                INT64(GetDevice()->GetDescriptorHandleIncrementSize(type) * index)
             )};
         }
 
         template<>
-        D3D12_GPU_DESCRIPTOR_HANDLE GetSRVDescriptorHandle(size_t index, ID3D12DescriptorHeap* srvDescriptorHeap)
+        D3D12_GPU_DESCRIPTOR_HANDLE GetDescriptorHandle(size_t index, ID3D12DescriptorHeap* descriptorHeap, D3D12_DESCRIPTOR_HEAP_TYPE type)
         {
             return { UINT64(
-                INT64(srvDescriptorHeap->GetGPUDescriptorHandleForHeapStart().ptr) + 
-                INT64(GetDevice()->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV) * index)
+                INT64(descriptorHeap->GetGPUDescriptorHandleForHeapStart().ptr) + 
+                INT64(GetDevice()->GetDescriptorHandleIncrementSize(type) * index)
             )};
         }
 
-        void PutSRVIntoDescriptorHeap(ID3D12Resource* resource, size_t index, ID3D12DescriptorHeap* srvDescriptorHeap)
+        void PutSRVIntoDescriptorHeap(ID3D12Resource* resource, size_t index, ID3D12DescriptorHeap* descriptorHeap)
         {
             D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
             srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
@@ -98,7 +98,7 @@ namespace Renderer
             srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
             srvDesc.Texture2D.MipLevels = 1;
 
-            GetDevice()->CreateShaderResourceView(resource, &srvDesc, GetSRVDescriptorHandle<D3D12_CPU_DESCRIPTOR_HANDLE>(index, srvDescriptorHeap));
+            GetDevice()->CreateShaderResourceView(resource, &srvDesc, GetDescriptorHandle<D3D12_CPU_DESCRIPTOR_HANDLE>(index, descriptorHeap, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV));
         }
 
     private:
@@ -111,6 +111,12 @@ namespace Renderer
         std::map<std::string, Microsoft::WRL::ComPtr<ID3D12Resource>> textureUploadBuffers;
     };
 
+    struct DescriptorHeapOffset
+    {
+        ID3D12DescriptorHeap* heap = nullptr;
+        size_t offset = 0;
+    };
+
     struct RenderTarget
     {
         enum Type
@@ -120,7 +126,15 @@ namespace Renderer
         };
 
         DELETE_CTORS(RenderTarget);
-        RenderTarget(DeviceDX12& device, ID3D12DescriptorHeap* srvDescriptorHeap, size_t width, size_t height, Type type);
+        RenderTarget(
+            DeviceDX12& device,
+            const DescriptorHeapOffset& srvDescriptorHeapOffset,
+            const DescriptorHeapOffset& rtvDescriptorHeapOffset,
+            const DescriptorHeapOffset& dsvDescriptorHeapOffset, 
+            size_t width,
+            size_t height,
+            DXGI_FORMAT format,
+            size_t numBuffers);
         ~RenderTarget() = default;
 
         void ClearAndSetRenderTargets(CommandList& list);
@@ -128,25 +142,23 @@ namespace Renderer
         ID3D12Resource* GetBuffer(size_t i);
 
     private:
-        void CreateDepthBuffer(size_t width, size_t height);
-        void CreateBuffer(size_t i, size_t width, size_t height, ID3D12DescriptorHeap* srvDescriptorHeap);
+        void CreateDepthBuffer(size_t width, size_t height, const DescriptorHeapOffset& dsvDescriptorHeapOffset);
+        void CreateBuffer(size_t i, size_t width, size_t height, DXGI_FORMAT format, const DescriptorHeapOffset& srvDescriptorHeapOffset, const DescriptorHeapOffset& rtvDescriptorHeapOffset);
 
         D3D12_CLEAR_VALUE CreateClearValue(D3D12_RESOURCE_DESC textureDescription);
         D3D12_RESOURCE_DESC CreateTextureDescription(DXGI_FORMAT format, D3D12_RESOURCE_FLAGS flags = D3D12_RESOURCE_FLAG_NONE);
 
         DeviceDX12& deviceDX12;
 
+        std::vector<Microsoft::WRL::ComPtr<ID3D12Resource>> textures;
         Microsoft::WRL::ComPtr<ID3D12Resource> depthStencilBuffer;
-        Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> depthStencilViewDescriptorHeap;
-        D3D12_CPU_DESCRIPTOR_HANDLE depthBufferHandle{};
 
-        std::vector<Microsoft::WRL::ComPtr<ID3D12Resource>> renderTargets;
-        std::vector<Microsoft::WRL::ComPtr<ID3D12DescriptorHeap>> rtvDescriptorHeaps;
+        D3D12_CPU_DESCRIPTOR_HANDLE depthBufferHandle {};
         std::vector<D3D12_CPU_DESCRIPTOR_HANDLE> rtvHandles;
         std::vector<D3D12_CPU_DESCRIPTOR_HANDLE> srvHandles;
 
         FLOAT clearColor[4] = { 0.0f, 0.f, 0.f, 1.000000000f };
-        Type bufferType;
+    
         size_t targetWidth;
         size_t targetHeight;
     };

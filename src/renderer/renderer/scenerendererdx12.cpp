@@ -45,7 +45,27 @@ namespace Renderer
             // rendering
             const UINT numberOfTextures = UINT(allMaterials.size() + 1);
 
-            CreateRootDescriptorHeap(NumberOfConstantStructs + numberOfTextures + NumberOfGBufferTextures);
+            // Create descriptor heaps
+            D3D12_DESCRIPTOR_HEAP_DESC srvHeapDescription;
+            srvHeapDescription.Type = D3D12_DESCRIPTOR_HEAP_TYPE::D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+            srvHeapDescription.NumDescriptors = NumberOfConstantStructs + numberOfTextures + NumberOfGBufferTextures;
+            srvHeapDescription.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+            srvHeapDescription.NodeMask = 0;
+            D3D_NOT_FAILED(deviceDX12.GetDevice()->CreateDescriptorHeap(&srvHeapDescription, IID_PPV_ARGS(&rootDescriptorHeap)));
+
+            D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDescription;
+            rtvHeapDescription.Type = D3D12_DESCRIPTOR_HEAP_TYPE::D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+            rtvHeapDescription.NumDescriptors = NumberOfGBufferTextures + 1;
+            rtvHeapDescription.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+            rtvHeapDescription.NodeMask = 0;
+            D3D_NOT_FAILED(deviceDX12.GetDevice()->CreateDescriptorHeap(&rtvHeapDescription, IID_PPV_ARGS(&renderTargetDescriptorHeap)));
+
+            D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDescription;
+            dsvHeapDescription.Type = D3D12_DESCRIPTOR_HEAP_TYPE::D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+            dsvHeapDescription.NumDescriptors = 1;
+            dsvHeapDescription.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+            dsvHeapDescription.NodeMask = 0;
+            D3D_NOT_FAILED(deviceDX12.GetDevice()->CreateDescriptorHeap(&dsvHeapDescription, IID_PPV_ARGS(&depthStencilDescriptorHeap)));
 
             // Constant buffer
             D3D12_RESOURCE_DESC uploadBufferDescription;
@@ -95,8 +115,8 @@ namespace Renderer
             // move constant buffer into correct state
             deviceDX12.GetList().AddBarrier(constantBuffer.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_GENERIC_READ);
 
-            gBuffer = std::make_unique<RenderTarget>(deviceDX12, rootDescriptorHeap.Get(), texture.GetWidth(), texture.GetHeight(), RenderTarget::Type::GBuffer);
-            finalImage = std::make_unique<RenderTarget>(deviceDX12, rootDescriptorHeap.Get(), texture.GetWidth(), texture.GetHeight(), RenderTarget::Type::FinalImage);
+            gBuffer = std::make_unique<RenderTarget>(deviceDX12, DescriptorHeapOffset { rootDescriptorHeap.Get(), 2 }, DescriptorHeapOffset { renderTargetDescriptorHeap.Get(), 1 }, DescriptorHeapOffset { depthStencilDescriptorHeap.Get(), 1 }, texture.GetWidth(), texture.GetHeight(), DXGI_FORMAT_R32G32B32A32_FLOAT, 3);
+            finalImage = std::make_unique<RenderTarget>(deviceDX12, DescriptorHeapOffset { rootDescriptorHeap.Get(), 1 }, DescriptorHeapOffset { renderTargetDescriptorHeap.Get(), 0 }, DescriptorHeapOffset { depthStencilDescriptorHeap.Get(), 0 }, texture.GetWidth(), texture.GetHeight(), DXGI_FORMAT_R8G8B8A8_UNORM, 1);
 
             // upload static geometry
             std::vector<XVertex> vertexData;
@@ -359,17 +379,6 @@ namespace Renderer
             return result;
         }
 
-        void CreateRootDescriptorHeap(UINT descriptorsCount)
-        {
-            D3D12_DESCRIPTOR_HEAP_DESC heapDescription;
-            heapDescription.Type = D3D12_DESCRIPTOR_HEAP_TYPE::D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-            heapDescription.NumDescriptors = descriptorsCount;
-            heapDescription.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-            heapDescription.NodeMask = 0;
-
-            D3D_NOT_FAILED(deviceDX12.GetDevice()->CreateDescriptorHeap(&heapDescription, IID_PPV_ARGS(&rootDescriptorHeap)));
-        }
-
         template<typename T>
         void SetBufferViewStrideOrFormat(T& bufferView, UINT stride)
         {
@@ -620,6 +629,8 @@ namespace Renderer
         std::unique_ptr<RenderTarget> finalImage;
 
         ComPtr<ID3D12DescriptorHeap> rootDescriptorHeap;
+        ComPtr<ID3D12DescriptorHeap> renderTargetDescriptorHeap;
+        ComPtr<ID3D12DescriptorHeap> depthStencilDescriptorHeap;
         ComPtr<ID3D12Resource> constantBuffer;
 
         ComPtr<ID3D12Resource> vertexBuffer;

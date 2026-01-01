@@ -18,7 +18,6 @@ Simple obj model viewer. Renders obj models with software rasterizer or DX12 ren
 1. Add model load with imgui.
 1. Change camera controls to resemble those of windows 3D viewer (rotating around the model with mouse)
 1. Add lighting, render feature, switching renderer controls to imgui.
-1. Minimize code duplication in DX12 renderer.
 1. Add SSAO to DX12 renderer.
 1. Add SSR to DX12 renderer.
 1. Fix backface culling in software renderer.

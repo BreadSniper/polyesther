@@ -121,6 +121,9 @@ namespace Renderer
         Edge minMax;
         Edge minMiddle;
         Edge middleMax;
+
+        std::vector<Triangle> subTriangles;
+        bool isValid = false;
     };
 
     struct SceneRendererSoftwareContext
@@ -147,6 +150,7 @@ namespace Renderer
 
         void FillZBuffer(Triangle& tr)
         {
+            if (!tr.isValid) return;
             for (int32_t y = tr.minMax.pixelYBegin; y < tr.minMax.pixelYEnd; y++)
             {
                 Edge* left = &tr.minMax;
@@ -176,6 +180,7 @@ namespace Renderer
 
         void FillGBuffer(Triangle& tr)
         {
+            if (!tr.isValid) return;
             for (int32_t y = tr.minMax.pixelYBegin; y < tr.minMax.pixelYEnd; y++)
             {
                 Edge* left = &tr.minMax;
@@ -317,6 +322,7 @@ namespace Renderer
         {
             assert(tr.vertices.size() == 3);
 
+            tr.isValid = true;
             for (VertexS& v : tr.vertices)
             {
                 v.v.position.x /= v.v.position.w;
@@ -417,7 +423,7 @@ namespace Renderer
             return vertices.size() != 0;
         }
 
-        void AddTriangle(Triangle& tr, const Matrix& transform, std::vector<Triangle>& trianglesCache)
+        void AddTriangle(Triangle& tr, const Matrix& transform)
         {
             for (VertexS& v : tr.vertices)
             {
@@ -462,7 +468,6 @@ namespace Renderer
             if (std::all_of(tr.vertices.begin(), tr.vertices.end(), [](const VertexS& v){ return IsVertexInside(v, 0, 1) && IsVertexInside(v, 1, 1) && IsVertexInside(v, 2, 1) && IsVertexInside(v, 0, -1) && IsVertexInside(v, 1, -1) && IsVertexInside(v, 2, -1); }))
             {
                 AddRawTriangle(tr);
-                trianglesCache.push_back(std::move(tr));
                 return;
             }
 
@@ -481,7 +486,7 @@ namespace Renderer
                     newTr.vertices[2] = vertices[i];
 
                     AddRawTriangle(newTr);
-                    trianglesCache.push_back(std::move(newTr));
+                    tr.subTriangles.push_back(std::move(newTr));
                 }
             }
         }
@@ -571,29 +576,53 @@ namespace Renderer
         PERF_START("Triangle cache");
         const Model& model = scene.models[0];
 
-        static std::vector<Triangle> trianglesCache;
-        trianglesCache.reserve(model.indices.size() / 3 * 2);
-        trianglesCache.clear();
+        static std::vector<Triangle> triangles;
+        triangles.resize(model.indices.size() / 3);
         PERF_END();
 
         PERF_START("Add triangles");
-        for (uint32_t i = 0; i < model.indices.size() / 3; i++)
+        auto tr_range = std::ranges::iota_view<size_t, size_t>{ 0, triangles.size() };
+        std::for_each(std::execution::par, tr_range.begin(), tr_range.end(), [&](size_t i) 
         {
-            Triangle triangle;
+            Triangle& triangle = triangles[i];
+            triangle = Triangle {};
             context->GetTriangleFromModel(i, model, triangle);
-            context->AddTriangle(triangle, ViewTransform(scene.camera), trianglesCache);
-        }
+            context->AddTriangle(triangle, ViewTransform(scene.camera));
+        });
         PERF_END();
 
         PERF_START("ZBuffer");
-        for (Triangle& tr : trianglesCache)
+        for (Triangle& tr : triangles)
         {
-            context->FillZBuffer(tr);
+            if (tr.subTriangles.size() > 0)
+            {
+                for (Triangle& newTr : tr.subTriangles)
+                {
+                    context->FillZBuffer(newTr);
+                }
+            }
+            else
+            {
+                context->FillZBuffer(tr);
+            }
         }
         PERF_END();
 
         PERF_START("GBuffer");
-        std::for_each(std::execution::par, trianglesCache.begin(), trianglesCache.end(), [this](Triangle& tr) { context->FillGBuffer(tr); });
+        std::for_each(std::execution::par, triangles.begin(), triangles.end(), [this](Triangle& tr) 
+        {
+            if (tr.subTriangles.size() > 0)
+            {
+                for (Triangle& newTr : tr.subTriangles)
+                {
+                    context->FillGBuffer(newTr);
+                }
+            }
+            else
+            {
+                context->FillGBuffer(tr); 
+            }
+        });
         PERF_END();
 
         PERF_START("Shading");
